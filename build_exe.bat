@@ -4,22 +4,46 @@ setlocal
 REM Ensure we're in the script directory
 cd /d %~dp0
 
-REM Optional: activate venv if present
-if exist .venv\Scripts\activate.bat (
+REM Flags (defaults)
+set "USE_SYSTEM=0"
+set "SKIP_INSTALL=0"
+
+REM Parse args
+for %%A in (%*) do (
+  if /I "%%~A"=="--use-system" set "USE_SYSTEM=1"
+  if /I "%%~A"=="--skip-install" set "SKIP_INSTALL=1"
+)
+
+REM Optional: activate venv if present (unless using system)
+if "%USE_SYSTEM%"=="0" if exist .venv\Scripts\activate.bat (
   call .venv\Scripts\activate.bat
 )
 
-REM Install runtime dependencies
-if exist requirements.txt (
+REM Install runtime dependencies (unless skipped)
+if "%SKIP_INSTALL%"=="0" if exist requirements.txt (
   echo Installing runtime dependencies...
   pip install -r requirements.txt
+) else (
+  echo Skipping dependency installation (--skip-install)
 )
 
-REM Install PyInstaller if missing
+REM Ensure PyInstaller is available
 where pyinstaller >nul 2>nul
 if errorlevel 1 (
-  echo Installing PyInstaller...
-  pip install pyinstaller
+  if "%SKIP_INSTALL%"=="0" (
+    echo Installing PyInstaller...
+    pip install pyinstaller
+  ) else (
+    echo PyInstaller not found and --skip-install was set. Aborting.
+    exit /b 1
+  )
+)
+
+REM Detect current Python site-packages path (only needed when using system)
+set "SITEPKG="
+if "%USE_SYSTEM%"=="1" (
+  for /f "usebackq delims=" %%i in (`python -c "import site; p=getattr(site,'getsitepackages',None); print((p() or [site.getusersitepackages()])[0])"`) do set "SITEPKG=%%i"
+  if defined SITEPKG echo Using system site-packages: %SITEPKG%
 )
 
 REM Clean previous build artifacts
@@ -33,8 +57,14 @@ if exist app.spec (
   del /q app.spec
 )
 
+REM Prepare optional --paths for PyInstaller
+set "PYI_PATHS="
+if "%USE_SYSTEM%"=="1" if defined SITEPKG (
+  set "PYI_PATHS=--paths "%SITEPKG%""
+)
+
 REM Build one-file executable
-pyinstaller --onefile --name app ^
+pyinstaller --onefile --name app %PYI_PATHS% ^
   --hidden-import flask ^
   --hidden-import jinja2 ^
   --hidden-import werkzeug ^
